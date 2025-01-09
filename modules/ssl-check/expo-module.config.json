@@ -1,0 +1,13 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": [
+      "SslCheckModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "gloat.modules.sslcheck.SslCheckModule"
+    ]
+  }
+}
