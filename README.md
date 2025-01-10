@@ -24,7 +24,7 @@ In the output, you'll find options to open the app in a
 
 ## Task
 
-Native code is located in `modules/ssl-check/ios|android` directories respectfully. The task is to implement `checkSSL` function so it success with correct `url`/`publicKey`(which is SHA256 hash of SSL certificate public key) and fails when `publicKey` doesn't match to certificate of domain of `url`.
+Native code is located in `modules/ssl-check/ios|android` directories respectfully, documentation on how Expo Modules work is [here](https://docs.expo.dev/modules/module-api/). The task is to implement `checkSSL` function so it success with correct `url`/`publicKey`(which is SHA256 hash of SSL certificate public key) and fails when `publicKey` doesn't match to certificate of domain of `url`.
 
 ## Learn more
 
