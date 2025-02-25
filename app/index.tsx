@@ -33,7 +33,8 @@ export default function Index() {
 
 const domainKeyData = {
     url: 'gloat-staging.gloat.com',
-    key: 'sha256/WPWkB1GSJ0Q/d+7OlJwpWNIx9D0enF6hB/St45U5jss=',
+    key: 'WPWkB1GSJ0Q/d+7OlJwpWNIx9D0enF6hB/St45U5jss=',
+    // key: 'sha256/WPWkB1GSJ0Q/d+7OlJwpWNIx9D0enF6hB/St45U5jss=',
     invalidKey: 'sha256/AAAkB1GSJ0Q/d+7OlJwpWNIx9D0enF6hB/St45U5jss=',
     endDate: 'Fri, 28 Mar 2025 13:34:54 UTC',
 }
