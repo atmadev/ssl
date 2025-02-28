@@ -1,9 +1,7 @@
 import ExpoModulesCore
-import Alamofire
+import TrustKit
 
 public class SslCheckModule: Module {
-  private var session: Session?
-
   // Each module class must implement the definition function. The definition consists of components
   // that describes the module's functionality and behavior.
   // See https://docs.expo.dev/modules/module-api for more details about available components.
@@ -12,160 +10,93 @@ public class SslCheckModule: Module {
     // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
     // The module will be accessible from `requireNativeModule('SslCheck')` in JavaScript.
     Name("SslCheck")
-
-    // Defines a JavaScript function that always returns a Promise and whose native code
-    // is by default dispatched on the different thread than the JavaScript runtime runs on.
-      AsyncFunction("checkSSL") { (url: String, publicKey: String, promise: Promise) in
-//          validateCertificate(url: url, domain: "wegloat.gloat-staging.gloat.com", publicKeyHash: publicKey) { isValid, error in
-//              if isValid {
-//                  print("Certificate is valid")
-//                  promise.resolve("++")
-//              } else {
-//                  print("Certificate validation failed: \(error?.localizedDescription ?? "")")
-//                  promise.reject(error!)
-//              }
-//          }
-//          return
-
-                // Convert the public key from Base64 string to Data
-                guard let publicKeyData = Data(base64Encoded: publicKey) else {
-                    promise.reject(
-                        Exception.init(name: "ErrorPublicKey", description: "Error base64 converting public key")
-                    )
-                  return
-                }
-
-                // Create a custom ServerTrustManager
-                let serverTrustManager = ServerTrustManager(allHostsMustBeEvaluated: true, evaluators: [
-                  "wegloat.gloat-staging.gloat.com": PublicKeyPinningEvaluator(publicKeyData: publicKeyData)
-                ])
-
-          let monitor = LoggingEventMonitor()
-
-                // Create a session with the ServerTrustManager
-          self.session = Session(serverTrustManager: serverTrustManager, eventMonitors: [monitor])
-
-                // Make the network request
-          self.session!.request(url).validate().response { response in
-                  switch response.result {
-                  case .success:
-                      promise.resolve("success")
-                  case .failure(let error):
-                      promise.reject(error)
-                  }
-                }
+    
+    AsyncFunction("checkSSL") { (url: String, publicKey: String, promise: Promise) in
+      do {
+        let evaluator = try CustomTrustEvaluator(url: url, publicKey: publicKey)
+        try evaluator.evaluate { success in
+          if success {
+            promise.resolve("success")
+          } else {
+            promise.reject(Exception.init(name: "Validation", description: "publicKey is not valid"))
+          }
+        }
+      } catch {
+        promise.reject(error)
+      }
     }
   }
 }
 
-// ========= OPTION 1 Chat-GPT =============
-final class PublicKeyPinningEvaluator: ServerTrustEvaluating {
-  let publicKeyData: Data
-
-  init(publicKeyData: Data) {
-    self.publicKeyData = publicKeyData
+class CustomTrustEvaluator: NSObject {
+  private let trustKit: TrustKit
+  private var trustCompletion: ((Bool) -> Void)?
+  private let url: URL
+  private lazy var session: URLSession = {
+    // IMPORTANT: The session object keeps a strong reference to the delegate. See more details:
+    // https://developer.apple.com/documentation/foundation/nsurlsession/1411597-sessionwithconfiguration#parameters
+    // Memory leak is prevented in didCompleteWithError method
+    URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+  }()
+  private var hadChallenge = false
+  
+  init(url urlString: String, publicKey: String) throws {
+    guard let urlComponents = URLComponents(string: urlString),
+          let url = urlComponents.url,
+          let urlHost = urlComponents.host else {
+      
+      throw Exception.init(name: "ErrorUrl", description: "Can't extract host from url")
+    }
+    
+    let trustKitConfig = [
+      kTSKSwizzleNetworkDelegates: false,
+      kTSKPinnedDomains: [
+        urlHost: [
+          // TrustKit requires at least 2 keys, so hardcoded second one, which is not valid
+          kTSKPublicKeyHashes: [ publicKey, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" ]
+        ]
+      ]
+    ] as [String : Any]
+    
+    trustKit = TrustKit(configuration: trustKitConfig)
+    self.url = url
   }
-
-  func evaluate(_ trust: SecTrust, forHost host: String) throws {
-    // Extract the server's public key from the certificate chain
-    guard let serverCertificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-      throw AFError.serverTrustEvaluationFailed(reason: .noCertificatesFound)
+  
+  func evaluate(completion: @escaping (Bool) -> Void) throws {
+    guard trustCompletion == nil else {
+      throw Exception.init(name: "EvaluationError", description: "Can evaluate only one time using a same evaluator")
     }
-
-    guard let serverPublicKey = SecCertificateCopyKey(serverCertificate),
-          let serverPublicKeyData = SecKeyCopyExternalRepresentation(serverPublicKey, nil) as Data? else {
-      throw AFError.serverTrustEvaluationFailed(reason: .noPublicKeysFound)
-    }
-
-      print("Check publicKey: \(publicKeyData)")
-      print("Certificate publicKey: \(serverPublicKeyData)")
-
-    // Compare the server's public key with the provided public key
-    if serverPublicKeyData != publicKeyData {
-        throw AFError.serverTrustEvaluationFailed(reason: .revocationPolicyCreationFailed)
-    }
+    trustCompletion = completion
+    session.dataTask(with: .init(url: url)).resume()
   }
 }
 
-final class LoggingEventMonitor: EventMonitor {
-    let queue = DispatchQueue(label: "com.example.LoggingEventMonitor")
-
-    func requestDidFinish(_ request: Request) {
-        print("Request finished: \(request)")
+extension CustomTrustEvaluator: URLSessionTaskDelegate {
+  func urlSession(_ session: URLSession,
+                  task: URLSessionTask,
+                  didReceive challenge: URLAuthenticationChallenge,
+                  completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    
+    hadChallenge = true
+    
+    let completion: (URLSession.AuthChallengeDisposition, URLCredential?) -> Void = { [weak self] disposition, credential in
+      completionHandler(disposition, credential)
+      self?.trustCompletion?(disposition == .useCredential)
+      self?.trustCompletion = nil
     }
-
-    func request(_ request: DataRequest, didValidateRequest urlRequest: URLRequest?, response: HTTPURLResponse, withResult result: Result<Void, Error>) {
-        switch result {
-        case .success:
-            print("Validation succeeded for request to: \(urlRequest?.url?.absoluteString ?? "Unknown URL")")
-        case .failure(let error):
-            print("Validation failed for request to: \(urlRequest?.url?.absoluteString ?? "Unknown URL") with error: \(error.localizedDescription)")
-        }
+    
+    let handled = trustKit.pinningValidator.handle(challenge, completionHandler: completion)
+    if !handled {
+      completion(.cancelAuthenticationChallenge, nil)
     }
-}
-
-// =============== OPTION 2 Claude ==============
-
-import Foundation
-import CommonCrypto
-
-var session: Session?
-
-func validateCertificate(url: String, domain: String, publicKeyHash: String, completion: @escaping (Bool, Error?) -> Void) {
-    let evaluator = CustomServerTrustEvaluating(publicKeyHash: publicKeyHash)
-    session = Session(serverTrustManager: ServerTrustManager(evaluators: [domain: evaluator]))
-    print("domain: \(domain)")
-    print("url: \(url)")
-
-    session!.request(url).response { response in
-        switch response.result {
-        case .success:
-            completion(true, nil)
-        case .failure(let error):
-            completion(false, error)
-        }
+  }
+  
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+    if let trustCompletion {
+      trustCompletion(!hadChallenge)
+      self.trustCompletion = nil
     }
-}
-
-final class CustomServerTrustEvaluating: ServerTrustEvaluating {
-    private let publicKeyHash: String
-
-    init(publicKeyHash: String) {
-        self.publicKeyHash = publicKeyHash
-    }
-
-    func evaluate(_ trust: SecTrust, forHost host: String) throws {
-        print("Evaluating certificate for host: \(host)")
-
-        // Get the certificate chain
-        let certificateCount = SecTrustGetCertificateCount(trust)
-        guard certificateCount > 0,
-              let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-            throw AFError.serverTrustEvaluationFailed(reason: .noPublicKeysFound)
-        }
-
-        print("> 1")
-
-        // Get public key data
-        guard let publicKey = SecCertificateCopyKey(certificate),
-              let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, nil) as? Data else {
-            throw AFError.serverTrustEvaluationFailed(reason: .noPublicKeysFound)
-        }
-
-        print("> 2")
-
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
-        publicKeyData.withUnsafeBytes { buffer in
-            _ = CC_SHA256(buffer.baseAddress, CC_LONG(buffer.count), &hash)
-        }
-
-        let computedHash = Data(hash).base64EncodedString()
-
-        print("Check publicKey: \(publicKeyHash)")
-        print("Certificate publicKey: \(computedHash)")
-
-        guard computedHash == publicKeyHash else {
-            throw AFError.serverTrustEvaluationFailed(reason: .customEvaluationFailed(error: Exception.init(name: "CertEvaluationError", description: "Error matching certificate")))
-        }
-    }
+    // To prevent memory leak
+    session.finishTasksAndInvalidate()
+  }
 }

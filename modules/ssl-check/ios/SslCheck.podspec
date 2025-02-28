@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'Alamofire', '~> 5.10.2'
+  s.dependency 'TrustKit'
 
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {
