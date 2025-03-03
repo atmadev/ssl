@@ -11,14 +11,14 @@ public class SslCheckModule: Module {
     // The module will be accessible from `requireNativeModule('SslCheck')` in JavaScript.
     Name("SslCheck")
     
-    AsyncFunction("checkSSL") { (url: String, publicKey: String, promise: Promise) in
+    AsyncFunction("checkSSL") { (url: String, publicKey: String, publicKeySecondary: String, promise: Promise) in
       do {
-        let evaluator = try CustomTrustEvaluator(url: url, publicKey: publicKey)
+        let evaluator = try CustomTrustEvaluator(url: url, publicKeys: [publicKey, publicKeySecondary])
         try evaluator.evaluate { success in
           if success {
             promise.resolve("success")
           } else {
-            promise.reject(Exception.init(name: "Validation", description: "publicKey is not valid"))
+            promise.reject(Exception.init(name: "Validation", description: "publicKeys is not valid"))
           }
         }
       } catch {
@@ -40,7 +40,7 @@ class CustomTrustEvaluator: NSObject {
   }()
   private var hadChallenge = false
   
-  init(url urlString: String, publicKey: String) throws {
+  init(url urlString: String, publicKeys: [String]) throws {
     guard let urlComponents = URLComponents(string: urlString),
           let url = urlComponents.url,
           let urlHost = urlComponents.host else {
@@ -52,13 +52,25 @@ class CustomTrustEvaluator: NSObject {
       kTSKSwizzleNetworkDelegates: false,
       kTSKPinnedDomains: [
         urlHost: [
-          // TrustKit requires at least 2 keys, so hardcoded second one, which is not valid
-          kTSKPublicKeyHashes: [ publicKey, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" ]
+          kTSKPublicKeyHashes: publicKeys
         ]
       ]
     ] as [String : Any]
+  
+    var aTrustKit: TrustKit?
+    // No memory leak in this ObjcTryCatch using, because in case of exception,
+    // TrustKit object is not created, so nothing to leak
+    if let exception = ObjcTryCatch({
+      aTrustKit = TrustKit(configuration: trustKitConfig)
+    }) {
+      throw Exception.init(name: "TrustKitInit", description: exception.description)
+    }
     
-    trustKit = TrustKit(configuration: trustKitConfig)
+    guard let aTrustKit else {
+      throw Exception.init(name: "TrustKitInit", description: "TrustKit init failed")
+    }
+    
+    trustKit = aTrustKit
     self.url = url
   }
   
@@ -99,4 +111,8 @@ extension CustomTrustEvaluator: URLSessionTaskDelegate {
     // To prevent memory leak
     session.finishTasksAndInvalidate()
   }
+}
+
+class TestClass {
+  let someProp = "prop"
 }
