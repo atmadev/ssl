@@ -18,7 +18,7 @@ public class SslCheckModule: Module {
           if success {
             promise.resolve("success")
           } else {
-            promise.reject(Exception.init(name: "Validation", description: "publicKeys is not valid"))
+            promise.reject(Exception.init(name: "Validation", description: "publicKeys are not valid"))
           }
         }
       } catch {
@@ -111,8 +111,4 @@ extension CustomTrustEvaluator: URLSessionTaskDelegate {
     // To prevent memory leak
     session.finishTasksAndInvalidate()
   }
-}
-
-class TestClass {
-  let someProp = "prop"
 }
